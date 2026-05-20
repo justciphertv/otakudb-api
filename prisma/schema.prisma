@@ -1,0 +1,634 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum UserTitleLanguage {
+  ROMAJI
+  ENGLISH
+  NATIVE
+}
+
+enum ScoreFormat {
+  POINT_100
+  POINT_10_DECIMAL
+  POINT_10
+  POINT_5
+  POINT_3
+}
+
+enum MediaType {
+  ANIME
+  MANGA
+}
+
+enum MediaFormat {
+  TV
+  TV_SHORT
+  MOVIE
+  SPECIAL
+  OVA
+  ONA
+  MUSIC
+  MANGA
+  NOVEL
+  ONE_SHOT
+}
+
+enum MediaStatus {
+  FINISHED
+  RELEASING
+  NOT_YET_RELEASED
+  CANCELLED
+  HIATUS
+}
+
+enum MediaSeason {
+  WINTER
+  SPRING
+  SUMMER
+  FALL
+}
+
+enum MediaSource {
+  ORIGINAL
+  MANGA
+  LIGHT_NOVEL
+  VISUAL_NOVEL
+  VIDEO_GAME
+  OTHER
+}
+
+enum CharacterRole {
+  MAIN
+  SUPPORTING
+  BACKGROUND
+}
+
+enum MediaRelationType {
+  ADAPTATION
+  PREQUEL
+  SEQUEL
+  PARENT
+  SIDE_STORY
+  CHARACTER
+  SUMMARY
+  ALTERNATIVE
+  SPIN_OFF
+  OTHER
+  SOURCE
+  COMPILATION
+  CONTAINS
+}
+
+enum MediaListStatus {
+  CURRENT
+  PLANNING
+  COMPLETED
+  DROPPED
+  PAUSED
+  REPEATING
+}
+
+enum FavouriteType {
+  ANIME
+  MANGA
+  CHARACTER
+  STAFF
+  STUDIO
+}
+
+enum ReviewRatingValue {
+  UPVOTE
+  DOWNVOTE
+}
+
+enum ActivityType {
+  TEXT
+  MESSAGE
+  MEDIA_LIST
+}
+
+enum LikeTargetType {
+  ACTIVITY
+  ACTIVITY_REPLY
+  REVIEW
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+  ACTIONED
+}
+
+model User {
+  id                  Int               @id @default(autoincrement())
+  name                String            @unique
+  email               String            @unique
+  passwordHash        String
+  avatarImage         String?
+  bannerImage         String?
+  about               String?
+  role                UserRole          @default(USER)
+  titleLanguage       UserTitleLanguage @default(ROMAJI)
+  scoreFormat         ScoreFormat       @default(POINT_10_DECIMAL)
+  displayAdultContent Boolean           @default(false)
+  timezone            String            @default("UTC")
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  ownedOAuthApplications OAuthApplication[] @relation("OAuthOwner")
+  accessTokens           AccessToken[]
+  mediaListEntries       MediaListEntry[]
+  customLists            MediaListCustomList[]
+  favourites             Favourite[]
+  following              Follow[]          @relation("UserFollowers")
+  followers              Follow[]          @relation("UserFollowing")
+  reviews                Review[]
+  reviewRatings          ReviewRating[]
+  activities             Activity[]        @relation("ActivityAuthor")
+  receivedMessages       Activity[]        @relation("MessageRecipient")
+  activityReplies        ActivityReply[]
+  notifications          Notification[]    @relation("NotificationUser")
+  actorNotifications     Notification[]    @relation("NotificationActor")
+  reports                Report[]          @relation("ReportReporter")
+  auditLogs              AuditLog[]         @relation("AuditActor")
+}
+
+model OAuthApplication {
+  id               Int      @id @default(autoincrement())
+  ownerUserId      Int
+  name             String
+  clientId         String   @unique
+  clientSecretHash String
+  redirectUris     String[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  owner        User          @relation("OAuthOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  accessTokens AccessToken[]
+}
+
+model AccessToken {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  applicationId Int?
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application OAuthApplication? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+}
+
+model Media {
+  id              Int          @id @default(autoincrement())
+  idMal           Int?         @unique
+  type            MediaType
+  format          MediaFormat
+  status          MediaStatus
+  titleRomaji     String
+  titleEnglish    String?
+  titleNative     String?
+  slug            String       @unique
+  description     String
+  startDateYear   Int?
+  startDateMonth  Int?
+  startDateDay    Int?
+  endDateYear     Int?
+  endDateMonth    Int?
+  endDateDay      Int?
+  season          MediaSeason?
+  seasonYear      Int?
+  episodes        Int?
+  duration        Int?
+  chapters        Int?
+  volumes         Int?
+  countryOfOrigin String?
+  source          MediaSource?
+  hashtag         String?
+  trailerId       String?
+  trailerSite     String?
+  coverImageLarge String?
+  coverImageMedium String?
+  bannerImage     String?
+  averageScore    Int          @default(0)
+  meanScore       Int          @default(0)
+  popularity      Int          @default(0)
+  favourites      Int          @default(0)
+  trending        Int          @default(0)
+  isAdult         Boolean      @default(false)
+  isLicensed      Boolean      @default(false)
+  siteUrl         String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  synonyms       MediaSynonym[]
+  genres         MediaGenre[]
+  tags           MediaTagOnMedia[]
+  studios        MediaStudio[]
+  characters     MediaCharacter[]
+  staff          MediaStaff[]
+  relations      MediaRelation[] @relation("MediaRelations")
+  relatedTo      MediaRelation[] @relation("RelatedMediaRelations")
+  airingSchedules AiringSchedule[]
+  listEntries    MediaListEntry[]
+  favouritesRows Favourite[]
+  reviews        Review[]
+  notifications  Notification[]
+
+  @@index([type])
+  @@index([status])
+  @@index([season, seasonYear])
+  @@index([popularity])
+}
+
+model MediaSynonym {
+  id      Int    @id @default(autoincrement())
+  mediaId Int
+  text    String
+
+  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@index([mediaId])
+}
+
+model Genre {
+  id    Int          @id @default(autoincrement())
+  name  String       @unique
+  media MediaGenre[]
+}
+
+model MediaGenre {
+  mediaId Int
+  genreId Int
+
+  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  genre Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([mediaId, genreId])
+}
+
+model MediaTag {
+  id               Int                @id @default(autoincrement())
+  name             String             @unique
+  description      String
+  category         String
+  rank             Int                @default(0)
+  isAdult          Boolean            @default(false)
+  isGeneralSpoiler Boolean            @default(false)
+  isMediaSpoiler   Boolean            @default(false)
+  media            MediaTagOnMedia[]
+}
+
+model MediaTagOnMedia {
+  mediaId   Int
+  tagId     Int
+  rank      Int     @default(0)
+  isSpoiler Boolean @default(false)
+
+  media Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  tag   MediaTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([mediaId, tagId])
+}
+
+model Studio {
+  id                Int      @id @default(autoincrement())
+  name              String   @unique
+  isAnimationStudio Boolean  @default(true)
+  siteUrl           String?
+
+  media          MediaStudio[]
+  favouritesRows Favourite[]
+}
+
+model MediaStudio {
+  mediaId  Int
+  studioId Int
+  isMain   Boolean @default(false)
+
+  media  Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@id([mediaId, studioId])
+}
+
+model Character {
+  id              Int     @id @default(autoincrement())
+  nameFirst       String?
+  nameMiddle      String?
+  nameLast        String?
+  nameFull        String
+  nameNative      String?
+  description     String?
+  imageLarge      String?
+  imageMedium     String?
+  gender          String?
+  dateOfBirthYear Int?
+  dateOfBirthMonth Int?
+  dateOfBirthDay  Int?
+  age             String?
+  bloodType       String?
+  favourites      Int     @default(0)
+
+  media          MediaCharacter[]
+  favouritesRows Favourite[]
+
+  @@index([nameFull])
+}
+
+model Staff {
+  id              Int     @id @default(autoincrement())
+  nameFirst       String?
+  nameMiddle      String?
+  nameLast        String?
+  nameFull        String
+  nameNative      String?
+  description     String?
+  imageLarge      String?
+  imageMedium     String?
+  language        String?
+  homeTown        String?
+  dateOfBirthYear Int?
+  dateOfBirthMonth Int?
+  dateOfBirthDay  Int?
+  dateOfDeathYear Int?
+  dateOfDeathMonth Int?
+  dateOfDeathDay  Int?
+  age             Int?
+  yearsActive     Int[]   @default([])
+  favourites      Int     @default(0)
+
+  characterRoles MediaCharacter[] @relation("VoiceActor")
+  mediaStaff     MediaStaff[]
+  favouritesRows Favourite[]
+
+  @@index([nameFull])
+}
+
+model MediaCharacter {
+  id           Int           @id @default(autoincrement())
+  mediaId      Int
+  characterId  Int
+  role         CharacterRole
+  voiceActorId Int?
+  language     String?
+
+  media      Media     @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  character  Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  voiceActor Staff?    @relation("VoiceActor", fields: [voiceActorId], references: [id], onDelete: SetNull)
+
+  @@index([mediaId])
+  @@index([characterId])
+}
+
+model MediaStaff {
+  id      Int    @id @default(autoincrement())
+  mediaId Int
+  staffId Int
+  role    String
+
+  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+}
+
+model MediaRelation {
+  id             Int               @id @default(autoincrement())
+  mediaId        Int
+  relatedMediaId Int
+  relationType   MediaRelationType
+
+  media        Media @relation("MediaRelations", fields: [mediaId], references: [id], onDelete: Cascade)
+  relatedMedia Media @relation("RelatedMediaRelations", fields: [relatedMediaId], references: [id], onDelete: Cascade)
+
+  @@unique([mediaId, relatedMediaId, relationType])
+}
+
+model AiringSchedule {
+  id              Int @id @default(autoincrement())
+  mediaId         Int
+  airingAt        Int
+  timeUntilAiring Int
+  episode         Int
+
+  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@index([mediaId, airingAt])
+}
+
+model MediaListEntry {
+  id                    Int             @id @default(autoincrement())
+  userId                Int
+  mediaId               Int
+  status                MediaListStatus
+  score                 Float           @default(0)
+  scoreRaw              Int             @default(0)
+  progress              Int             @default(0)
+  progressVolumes       Int?
+  repeat                Int             @default(0)
+  priority              Int             @default(0)
+  private               Boolean         @default(false)
+  notes                 String?
+  hiddenFromStatusLists Boolean         @default(false)
+  startedAtYear         Int?
+  startedAtMonth        Int?
+  startedAtDay          Int?
+  completedAtYear       Int?
+  completedAtMonth      Int?
+  completedAtDay        Int?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  user        User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  media       Media                      @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  customLists MediaListEntryCustomList[]
+  activities  Activity[]
+
+  @@unique([userId, mediaId])
+  @@index([userId, status])
+  @@index([mediaId])
+}
+
+model MediaListCustomList {
+  id     Int    @id @default(autoincrement())
+  userId Int
+  name   String
+
+  user    User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries MediaListEntryCustomList[]
+
+  @@unique([userId, name])
+}
+
+model MediaListEntryCustomList {
+  entryId      Int
+  customListId Int
+
+  entry      MediaListEntry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  customList MediaListCustomList @relation(fields: [customListId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, customListId])
+}
+
+model Favourite {
+  id          Int           @id @default(autoincrement())
+  userId      Int
+  mediaId     Int?
+  characterId Int?
+  staffId     Int?
+  studioId    Int?
+  type        FavouriteType
+  sortOrder   Int           @default(0)
+  createdAt   DateTime      @default(now())
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  media     Media?     @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  character Character? @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  staff     Staff?     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  studio    Studio?    @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+model Follow {
+  id          Int      @id @default(autoincrement())
+  followerId  Int
+  followingId Int
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("UserFollowers", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("UserFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+}
+
+model Review {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  mediaId      Int
+  summary      String
+  body         String
+  score        Int
+  rating       Int      @default(0)
+  ratingAmount Int      @default(0)
+  private      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  media   Media          @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  ratings ReviewRating[]
+}
+
+model ReviewRating {
+  id       Int               @id @default(autoincrement())
+  reviewId Int
+  userId   Int
+  rating   ReviewRatingValue
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, userId])
+}
+
+model Activity {
+  id               Int          @id @default(autoincrement())
+  userId           Int
+  type             ActivityType
+  text             String?
+  messageRecipientId Int?
+  mediaListEntryId Int?
+  replyCount       Int          @default(0)
+  likeCount        Int          @default(0)
+  isLocked         Boolean      @default(false)
+  isPinned         Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  user             User            @relation("ActivityAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  messageRecipient User?           @relation("MessageRecipient", fields: [messageRecipientId], references: [id], onDelete: Cascade)
+  mediaListEntry   MediaListEntry? @relation(fields: [mediaListEntryId], references: [id], onDelete: SetNull)
+  replies          ActivityReply[]
+
+  @@index([userId, createdAt])
+}
+
+model ActivityReply {
+  id         Int      @id @default(autoincrement())
+  activityId Int
+  userId     Int
+  text       String
+  likeCount  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Like {
+  id         Int            @id @default(autoincrement())
+  userId     Int
+  targetType LikeTargetType
+  targetId   Int
+  createdAt  DateTime       @default(now())
+
+  @@unique([userId, targetType, targetId])
+}
+
+model Notification {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  type       String
+  actorId    Int?
+  activityId Int?
+  mediaId    Int?
+  context    String?
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  user  User  @relation("NotificationUser", fields: [userId], references: [id], onDelete: Cascade)
+  actor User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  media Media? @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+}
+
+model Report {
+  id         Int          @id @default(autoincrement())
+  reporterId Int
+  targetType String
+  targetId   Int
+  reason     String
+  status     ReportStatus @default(OPEN)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  reporter User @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  actorId    Int
+  action     String
+  targetType String
+  targetId   Int
+  metadata   Json
+  createdAt  DateTime @default(now())
+
+  actor User @relation("AuditActor", fields: [actorId], references: [id], onDelete: Cascade)
+}

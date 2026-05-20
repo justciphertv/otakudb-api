@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: otakudb
+      POSTGRES_PASSWORD: otakudb
+      POSTGRES_DB: otakudb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U otakudb -d otakudb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.10
+    environment:
+      MEILI_MASTER_KEY: dev_meili_key
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili_data:/meili_data
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      meilisearch:
+        condition: service_started
+    env_file: .env
+    ports:
+      - "4000:4000"
+    command: pnpm start
+
+volumes:
+  postgres_data:
+  meili_data:

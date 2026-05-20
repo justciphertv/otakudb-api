@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+.env
+.env.local
+*.log
+.dev-server.pid
+.server-*.log
+.dev-server*.log
