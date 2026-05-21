@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN apk add --no-cache \
   libc6-compat \
+  libstdc++ \
   openssl \
   python3 \
   make \
@@ -21,6 +22,7 @@ WORKDIR /app
 
 RUN apk add --no-cache \
   libc6-compat \
+  libstdc++ \
   openssl \
   python3 \
   make \
@@ -38,11 +40,12 @@ COPY . .
 RUN pnpm prisma generate
 RUN pnpm build
 
-# Fail during build instead of crashing at runtime if TypeScript did not emit the expected entry file.
-RUN test -f dist/server.js || \
-  (echo "ERROR: pnpm build did not create dist/server.js. Check tsconfig.json outDir/rootDir/noEmit or update package.json start path." && \
+# Your current tsconfig emits src/server.ts to dist/src/server.js.
+# Fail during build if that entry file is missing, instead of crashing at runtime.
+RUN test -f dist/src/server.js || \
+  (echo "ERROR: pnpm build did not create dist/src/server.js. Check tsconfig.json outDir/rootDir/noEmit or update the Docker CMD/start script." && \
    echo "Files produced:" && \
-   find . -maxdepth 4 -type f | sort | sed -n '1,240p' && \
+   find dist -maxdepth 4 -type f | sort && \
    exit 1)
 
 RUN pnpm prune --prod
@@ -55,6 +58,7 @@ ENV NODE_ENV=production
 
 RUN apk add --no-cache \
   libc6-compat \
+  libstdc++ \
   openssl \
   ca-certificates
 
@@ -66,4 +70,4 @@ COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000
 
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/src/server.js"]
