@@ -109,6 +109,11 @@ type AniListStaff = {
 const QUERY = `
   query ImportPopular($type: MediaType!, $page: Int!, $perPage: Int!) {
     Page(page: $page, perPage: $perPage) {
+      pageInfo {
+        total
+        currentPage
+        hasNextPage
+      }
       media(type: $type, sort: [POPULARITY_DESC]) {
         id
         idMal
@@ -194,27 +199,141 @@ const QUERY = `
   }
 `;
 
-async function main() {
-  const perType = Number(process.env.ANILIST_IMPORT_PER_TYPE ?? "25");
-  await clearDemoMetadata();
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const config = {
+    limit: process.env.ANILIST_IMPORT_PER_TYPE ?? "25",
+    clear: false,
+    delay: null as number | null,
+    chunkSize: 50,
+    types: "all"
+  };
 
-  const imported = [];
-  for (const type of [MediaType.ANIME, MediaType.MANGA]) {
-    const media = await fetchPopular(type, 1, perType);
-    for (const item of media) imported.push(await upsertMedia(item));
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--clear" || arg === "--reset") {
+      config.clear = true;
+    } else if (arg === "--limit") {
+      config.limit = args[++i];
+    } else if (arg === "--delay") {
+      config.delay = Number(args[++i]);
+    } else if (arg === "--chunk-size") {
+      config.chunkSize = Number(args[++i]);
+    } else if (arg === "--types") {
+      config.types = args[++i];
+    }
   }
 
+  return config;
+}
+
+let nextRequestAt = 0;
+const requestsPerMin = env.ANILIST_REQUESTS_PER_MINUTE || 60;
+const defaultSpacingMs = Math.ceil(60_000 / requestsPerMin);
+
+async function throttle(customDelay?: number | null) {
+  const spacing = customDelay !== undefined && customDelay !== null ? customDelay : defaultSpacingMs;
+  const now = Date.now();
+  const waitMs = Math.max(0, nextRequestAt - now);
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  nextRequestAt = Date.now() + spacing;
+}
+
+async function main() {
+  const config = parseArgs();
+
+  let limitPerType: number | null = null;
+  if (config.limit !== "all" && config.limit !== "-1") {
+    limitPerType = Number(config.limit);
+  }
+
+  if (config.clear) {
+    console.log("Wiping existing database metadata as requested...");
+    await clearDemoMetadata();
+  } else {
+    console.log("Running in safe upsert mode. Unrelated tables will not be cleared.");
+  }
+
+  const typesToImport: MediaType[] = [];
+  if (config.types === "anime" || config.types === "all") {
+    typesToImport.push(MediaType.ANIME);
+  }
+  if (config.types === "manga" || config.types === "all") {
+    typesToImport.push(MediaType.MANGA);
+  }
+
+  const imported = [];
+
+  for (const type of typesToImport) {
+    console.log(`Starting import for ${type}...`);
+    let page = 1;
+    let totalImportedForType = 0;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      let perPage = Math.min(config.chunkSize, 50);
+      if (limitPerType !== null) {
+        const remaining = limitPerType - totalImportedForType;
+        if (remaining <= 0) break;
+        perPage = Math.min(perPage, remaining);
+      }
+
+      console.log(`Fetching page ${page} of popular ${type} (chunk size: ${perPage})...`);
+
+      let pageData: { pageInfo?: { hasNextPage: boolean } | null; media: AniListMedia[] };
+      try {
+        const data = await request<{ Page: { pageInfo?: { hasNextPage: boolean } | null; media: AniListMedia[] } }>(
+          QUERY,
+          { type, page, perPage },
+          config.delay
+        );
+        pageData = data.Page;
+      } catch (err: any) {
+        console.error(`Failed to fetch page ${page} of ${type}: ${err.message}`);
+        break;
+      }
+
+      const mediaItems = pageData.media || [];
+      if (mediaItems.length === 0) {
+        console.log(`No more popular ${type} returned.`);
+        break;
+      }
+
+      for (const item of mediaItems) {
+        try {
+          const upserted = await upsertMedia(item);
+          imported.push(upserted);
+          totalImportedForType++;
+          console.log(`[${totalImportedForType}] Upserted: ${upserted.titleRomaji} (Slug: ${upserted.slug})`);
+        } catch (err: any) {
+          console.error(`Failed to upsert item ${item.id}: ${err.message}`);
+        }
+      }
+
+      hasNextPage = pageData.pageInfo?.hasNextPage ?? false;
+      if (limitPerType !== null && totalImportedForType >= limitPerType) {
+        hasNextPage = false;
+      }
+
+      if (hasNextPage) {
+        page++;
+      }
+    }
+
+    console.log(`Finished import for ${type}. Total imported: ${totalImportedForType}`);
+  }
+
+  console.log("Reindexing search index...");
   const search = new SearchService(meili, prisma);
   await search.reindexAll();
-  console.log(`Imported ${imported.length} public AniList media records and rebuilt search index`);
+  console.log(`Imported/Updated ${imported.length} public AniList media records and rebuilt search index`);
 }
 
-async function fetchPopular(type: MediaType, page: number, perPage: number) {
-  const data = await request<{ Page: { media: AniListMedia[] } }>(QUERY, { type, page, perPage });
-  return data.Page.media;
-}
+async function request<T>(query: string, variables: Record<string, unknown>, delayOverride?: number | null): Promise<T> {
+  await throttle(delayOverride);
 
-async function request<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json"
@@ -228,8 +347,9 @@ async function request<T>(query: string, variables: Record<string, unknown>): Pr
   });
   if (response.status === 429) {
     const retryAfter = Number(response.headers.get("retry-after") ?? "60");
+    console.log(`[Rate Limit] AniList API 429 received. Sleeping for ${retryAfter}s...`);
     await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
-    return request<T>(query, variables);
+    return request<T>(query, variables, delayOverride);
   }
   const payload = (await response.json()) as { data?: T; errors?: Array<{ message: string }> };
   if (!response.ok || payload.errors?.length || !payload.data) {
@@ -271,52 +391,84 @@ async function clearDemoMetadata() {
 
 async function upsertMedia(item: AniListMedia) {
   const title = item.title.romaji ?? item.title.english ?? item.title.native ?? `AniList ${item.id}`;
-  const media = await prisma.media.create({
-    data: {
-      idMal: item.idMal ?? null,
-      type: item.type,
-      format: mapFormat(item.format, item.type),
-      status: mapStatus(item.status),
-      titleRomaji: title,
-      titleEnglish: item.title.english ?? null,
-      titleNative: item.title.native ?? null,
-      slug: uniqueSlug(title, item.id),
-      description: stripHtml(item.description) || "Public metadata imported from AniList API.",
-      startDateYear: item.startDate?.year ?? null,
-      startDateMonth: item.startDate?.month ?? null,
-      startDateDay: item.startDate?.day ?? null,
-      endDateYear: item.endDate?.year ?? null,
-      endDateMonth: item.endDate?.month ?? null,
-      endDateDay: item.endDate?.day ?? null,
-      season: item.season as any,
-      seasonYear: item.seasonYear ?? null,
-      episodes: item.episodes ?? null,
-      duration: item.duration ?? null,
-      chapters: item.chapters ?? null,
-      volumes: item.volumes ?? null,
-      countryOfOrigin: item.countryOfOrigin ?? null,
-      source: mapSource(item.source),
-      hashtag: item.hashtag ?? null,
-      trailerId: item.trailer?.id ?? null,
-      trailerSite: item.trailer?.site ?? null,
-      coverImageLarge: item.coverImage?.large ?? null,
-      coverImageMedium: item.coverImage?.medium ?? null,
-      bannerImage: item.bannerImage ?? null,
-      averageScore: item.averageScore ?? 0,
-      meanScore: item.meanScore ?? 0,
-      popularity: item.popularity ?? 0,
-      favourites: item.favourites ?? 0,
-      trending: item.trending ?? 0,
-      isAdult: item.isAdult ?? false,
-      isLicensed: false,
-      siteUrl: item.siteUrl ?? null
-    }
-  });
+  const slug = uniqueSlug(title, item.id);
+
+  let existingMedia = null;
+  if (item.idMal) {
+    existingMedia = await prisma.media.findFirst({
+      where: {
+        OR: [
+          { slug },
+          { idMal: item.idMal }
+        ]
+      }
+    });
+  } else {
+    existingMedia = await prisma.media.findUnique({ where: { slug } });
+  }
+
+  const mediaData = {
+    idMal: item.idMal ?? null,
+    type: item.type,
+    format: mapFormat(item.format, item.type),
+    status: mapStatus(item.status),
+    titleRomaji: title,
+    titleEnglish: item.title.english ?? null,
+    titleNative: item.title.native ?? null,
+    slug,
+    description: stripHtml(item.description) || "Public metadata imported from AniList API.",
+    startDateYear: item.startDate?.year ?? null,
+    startDateMonth: item.startDate?.month ?? null,
+    startDateDay: item.startDate?.day ?? null,
+    endDateYear: item.endDate?.year ?? null,
+    endDateMonth: item.endDate?.month ?? null,
+    endDateDay: item.endDate?.day ?? null,
+    season: item.season as any,
+    seasonYear: item.seasonYear ?? null,
+    episodes: item.episodes ?? null,
+    duration: item.duration ?? null,
+    chapters: item.chapters ?? null,
+    volumes: item.volumes ?? null,
+    countryOfOrigin: item.countryOfOrigin ?? null,
+    source: mapSource(item.source),
+    hashtag: item.hashtag ?? null,
+    trailerId: item.trailer?.id ?? null,
+    trailerSite: item.trailer?.site ?? null,
+    coverImageLarge: item.coverImage?.large ?? null,
+    coverImageMedium: item.coverImage?.medium ?? null,
+    bannerImage: item.bannerImage ?? null,
+    averageScore: item.averageScore ?? 0,
+    meanScore: item.meanScore ?? 0,
+    popularity: item.popularity ?? 0,
+    favourites: item.favourites ?? 0,
+    trending: item.trending ?? 0,
+    isAdult: item.isAdult ?? false,
+    isLicensed: false,
+    siteUrl: item.siteUrl ?? null
+  };
+
+  let media;
+  if (existingMedia) {
+    media = await prisma.media.update({
+      where: { id: existingMedia.id },
+      data: mediaData
+    });
+    // Delete non-unique relationships to prevent duplicates
+    await prisma.$transaction([
+      prisma.mediaSynonym.deleteMany({ where: { mediaId: media.id } }),
+      prisma.mediaCharacter.deleteMany({ where: { mediaId: media.id } }),
+      prisma.mediaStaff.deleteMany({ where: { mediaId: media.id } }),
+      prisma.airingSchedule.deleteMany({ where: { mediaId: media.id } })
+    ]);
+  } else {
+    media = await prisma.media.create({
+      data: mediaData
+    });
+  }
 
   for (const synonym of item.synonyms ?? []) {
     if (synonym) await prisma.mediaSynonym.create({ data: { mediaId: media.id, text: synonym } });
   }
-
   for (const name of item.genres ?? []) {
     const genre = await prisma.genre.upsert({ where: { name }, create: { name }, update: {} });
     await prisma.mediaGenre.upsert({
