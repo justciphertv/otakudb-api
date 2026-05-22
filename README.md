@@ -214,23 +214,48 @@ pnpm search:reindex
 
 If Meilisearch is unavailable, media search falls back to PostgreSQL queries across titles, synonyms, description, genres, and tags.
 
-## Optional AniList API Importer
+## Robust AniList API Importer & Scraper
 
-`AniListPublicApiImporter` is an official GraphQL API client, not a scraper. Public metadata requests can run without credentials. If you have a valid user access token for permitted API operations, set:
+The AniList importer (`src/modules/imports/anilist-import.ts`) is a robust, paginated, and rate-limited scraper capable of populating the database safely.
 
-```txt
-ANILIST_ACCESS_TOKEN=...
-```
+It runs in **safe update/upsert mode by default**. When running updates:
+- Media records are found using an `OR` match against dual unique constraints (`slug` or `idMal`).
+- Stale, non-unique relations (synonyms, characters, staff, and airing schedules) are cleared in a transaction before updates to prevent duplicates.
+- High-level metadata databases (likes, reviews, activity, reports) are **never** cleared unless explicitly requested.
 
-Do not commit client secrets or access tokens. Rotate any secret that has been pasted into chat, logs, or source control.
+### Throttling & Dynamic Rate-Limiting
+- The script automatically spaces GraphQL API queries based on `ANILIST_REQUESTS_PER_MINUTE` (default: `60`) to perfectly adhere to AniList's API policies.
+- A built-in fallback automatically handles dynamic `429 Too Many Requests` status codes, sleeping for the duration of the `retry-after` header value.
 
-Populate local metadata from AniList's official API:
+### Usage
 
 ```bash
-pnpm import:anilist
+pnpm import:anilist [options]
 ```
 
-By default this imports 25 anime and 25 manga. Override with `ANILIST_IMPORT_PER_TYPE=50`.
+#### CLI Flags
+* `--limit <number|all>`: Limit to import per media type. Defaults to `ANILIST_IMPORT_PER_TYPE` or `25`. Use `all` or `-1` to continuously scrape all pages until AniList runs out of records.
+* `--clear` or `--reset`: Wipe all demo tables (including user metadata, reports, likes, comments) and perform a fresh import from scratch.
+* `--delay <ms>`: Overrides the calculated requests-per-minute spacing delay with a custom sleep interval.
+* `--chunk-size <number>`: Number of records to query per page (max 50, defaults to 50).
+* `--types <anime|manga|all>`: Only import specific media types. Defaults to `all`.
+
+#### Example Configurations
+
+Import 100 Anime and 100 Manga records safely (updating existing ones, adding new ones):
+```bash
+pnpm import:anilist --limit 100
+```
+
+Scrape all records from AniList (continuous paginated loop with automatic rate-limit throttling):
+```bash
+pnpm import:anilist --limit all
+```
+
+Wipe all database records and perform a clean 50-item scrape:
+```bash
+pnpm import:anilist --limit 50 --clear
+```
 
 ## Rate Limiting And Security
 
