@@ -206,7 +206,8 @@ function parseArgs() {
     clear: false,
     delay: null as number | null,
     chunkSize: 50,
-    types: "all"
+    types: "all",
+    page: 1
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -221,6 +222,8 @@ function parseArgs() {
       config.chunkSize = Number(args[++i]);
     } else if (arg === "--types") {
       config.types = args[++i];
+    } else if (arg === "--page" || arg === "--start-page") {
+      config.page = Number(args[++i]);
     }
   }
 
@@ -268,7 +271,7 @@ async function main() {
 
   for (const type of typesToImport) {
     console.log(`Starting import for ${type}...`);
-    let page = 1;
+    let page = config.page;
     let totalImportedForType = 0;
     let hasNextPage = true;
 

@@ -236,6 +236,7 @@ pnpm import:anilist [options]
 #### CLI Flags
 * `--limit <number|all>`: Limit to import per media type. Defaults to `ANILIST_IMPORT_PER_TYPE` or `25`. Use `all` or `-1` to continuously scrape all pages until AniList runs out of records.
 * `--clear` or `--reset`: Wipe all demo tables (including user metadata, reports, likes, comments) and perform a fresh import from scratch.
+* `--page <number>` or `--start-page <number>`: The page number to start importing from (defaults to `1`). Extremely useful to resume a paused/rate-limited scrape.
 * `--delay <ms>`: Overrides the calculated requests-per-minute spacing delay with a custom sleep interval.
 * `--chunk-size <number>`: Number of records to query per page (max 50, defaults to 50).
 * `--types <anime|manga|all>`: Only import specific media types. Defaults to `all`.
@@ -245,6 +246,11 @@ pnpm import:anilist [options]
 Import 100 Anime and 100 Manga records safely (updating existing ones, adding new ones):
 ```bash
 pnpm import:anilist --limit 100
+```
+
+Resume scraping from a specific offset (e.g. skip the first 500 items/10 pages and import starting at page 11):
+```bash
+pnpm import:anilist --limit all --page 11
 ```
 
 Scrape all records from AniList (continuous paginated loop with automatic rate-limit throttling):
