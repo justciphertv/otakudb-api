@@ -28,7 +28,20 @@ export async function buildApp() {
 
   app.get("/health", async () => {
     await prisma.$queryRaw`SELECT 1`;
-    return { ok: true, service: "otakudb-api" };
+    const [anime, manga, characters] = await Promise.all([
+      prisma.media.count({ where: { type: "ANIME" } }),
+      prisma.media.count({ where: { type: "MANGA" } }),
+      prisma.character.count()
+    ]);
+    return {
+      ok: true,
+      service: "otakudb-api",
+      counts: {
+        anime,
+        manga,
+        characters
+      }
+    };
   });
 
   const validationRules = [
