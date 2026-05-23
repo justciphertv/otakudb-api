@@ -240,6 +240,9 @@ pnpm import:anilist [options]
 * `--delay <ms>`: Overrides the calculated requests-per-minute spacing delay with a custom sleep interval.
 * `--chunk-size <number>`: Number of records to query per page (max 50, defaults to 50).
 * `--types <anime|manga|all>`: Only import specific media types. Defaults to `all`.
+* `--year-by-year` or `--chronological`: Enables chronological year-by-year partitioning (divide-and-conquer) to bypass AniList's 5,000 item single-query pagination limit.
+* `--start-year <year>`: The starting year for the chronological partitioning loop (defaults to `1940`).
+* `--end-year <year>`: The ending year for the chronological partitioning loop (defaults to `<current_year> + 1`).
 
 #### Example Configurations
 
@@ -256,6 +259,11 @@ pnpm import:anilist --limit all --page 11
 Scrape all records from AniList (continuous paginated loop with automatic rate-limit throttling):
 ```bash
 pnpm import:anilist --limit all
+```
+
+Scrape the entire AniList catalog chronologically year-by-year (divide-and-conquer to bypass the 5,000 item API limit completely):
+```bash
+pnpm import:anilist --limit all --year-by-year --start-year 1940 --end-year 2026
 ```
 
 Wipe all database records and perform a clean 50-item scrape:
