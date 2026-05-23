@@ -107,14 +107,14 @@ type AniListStaff = {
 };
 
 const QUERY = `
-  query ImportPopular($type: MediaType!, $page: Int!, $perPage: Int!) {
+  query ImportPopular($type: MediaType!, $page: Int!, $perPage: Int!, $startDateGreater: FuzzyDateInt, $startDateLesser: FuzzyDateInt) {
     Page(page: $page, perPage: $perPage) {
       pageInfo {
         total
         currentPage
         hasNextPage
       }
-      media(type: $type, sort: [POPULARITY_DESC]) {
+      media(type: $type, sort: [POPULARITY_DESC], startDate_greater: $startDateGreater, startDate_lesser: $startDateLesser) {
         id
         idMal
         type
@@ -207,7 +207,10 @@ function parseArgs() {
     delay: null as number | null,
     chunkSize: 50,
     types: "all",
-    page: 1
+    page: 1,
+    yearByYear: false,
+    startYear: 1940,
+    endYear: new Date().getFullYear() + 1
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -224,6 +227,12 @@ function parseArgs() {
       config.types = args[++i];
     } else if (arg === "--page" || arg === "--start-page") {
       config.page = Number(args[++i]);
+    } else if (arg === "--year-by-year" || arg === "--chronological") {
+      config.yearByYear = true;
+    } else if (arg === "--start-year") {
+      config.startYear = Number(args[++i]);
+    } else if (arg === "--end-year") {
+      config.endYear = Number(args[++i]);
     }
   }
 
@@ -271,57 +280,127 @@ async function main() {
 
   for (const type of typesToImport) {
     console.log(`Starting import for ${type}...`);
-    let page = config.page;
     let totalImportedForType = 0;
-    let hasNextPage = true;
 
-    while (hasNextPage) {
-      let perPage = Math.min(config.chunkSize, 50);
-      if (limitPerType !== null) {
-        const remaining = limitPerType - totalImportedForType;
-        if (remaining <= 0) break;
-        perPage = Math.min(perPage, remaining);
-      }
+    if (config.yearByYear) {
+      console.log(`Chronological mode active: importing from year ${config.startYear} to ${config.endYear}...`);
+      for (let year = config.startYear; year <= config.endYear; year++) {
+        if (limitPerType !== null && totalImportedForType >= limitPerType) {
+          break;
+        }
 
-      console.log(`Fetching page ${page} of popular ${type} (chunk size: ${perPage})...`);
+        console.log(`--- Starting Year ${year} ---`);
+        let page = year === config.startYear ? config.page : 1;
+        let hasNextPageForYear = true;
 
-      let pageData: { pageInfo?: { hasNextPage: boolean } | null; media: AniListMedia[] };
-      try {
-        const data = await request<{ Page: { pageInfo?: { hasNextPage: boolean } | null; media: AniListMedia[] } }>(
-          QUERY,
-          { type, page, perPage },
-          config.delay
-        );
-        pageData = data.Page;
-      } catch (err: any) {
-        console.error(`Failed to fetch page ${page} of ${type}: ${err.message}`);
-        break;
-      }
+        while (hasNextPageForYear) {
+          let perPage = Math.min(config.chunkSize, 50);
+          if (limitPerType !== null) {
+            const remaining = limitPerType - totalImportedForType;
+            if (remaining <= 0) break;
+            perPage = Math.min(perPage, remaining);
+          }
 
-      const mediaItems = pageData.media || [];
-      if (mediaItems.length === 0) {
-        console.log(`No more popular ${type} returned.`);
-        break;
-      }
+          console.log(`Fetching page ${page} of popular ${type} for year ${year} (chunk size: ${perPage})...`);
 
-      for (const item of mediaItems) {
-        try {
-          const upserted = await upsertMedia(item);
-          imported.push(upserted);
-          totalImportedForType++;
-          console.log(`[${totalImportedForType}] Upserted: ${upserted.titleRomaji} (Slug: ${upserted.slug})`);
-        } catch (err: any) {
-          console.error(`Failed to upsert item ${item.id}: ${err.message}`);
+          let pageData: { pageInfo?: { hasNextPage: boolean } | null; media: AniListMedia[] };
+          try {
+            const data = await request<{ Page: { pageInfo?: { hasNextPage: boolean } | null; media: AniListMedia[] } }>(
+              QUERY,
+              {
+                type,
+                page,
+                perPage,
+                startDateGreater: year * 10000,
+                startDateLesser: (year + 1) * 10000
+              },
+              config.delay
+            );
+            pageData = data.Page;
+          } catch (err: any) {
+            console.error(`Failed to fetch page ${page} of ${type} for year ${year}: ${err.message}`);
+            break;
+          }
+
+          const mediaItems = pageData.media || [];
+          if (mediaItems.length === 0) {
+            console.log(`No popular ${type} returned for year ${year}.`);
+            break;
+          }
+
+          for (const item of mediaItems) {
+            try {
+              const upserted = await upsertMedia(item);
+              imported.push(upserted);
+              totalImportedForType++;
+              console.log(`[${totalImportedForType}] Upserted: ${upserted.titleRomaji} (Slug: ${upserted.slug})`);
+            } catch (err: any) {
+              console.error(`Failed to upsert item ${item.id}: ${err.message}`);
+            }
+          }
+
+          hasNextPageForYear = pageData.pageInfo?.hasNextPage ?? false;
+          if (limitPerType !== null && totalImportedForType >= limitPerType) {
+            hasNextPageForYear = false;
+          }
+
+          if (hasNextPageForYear) {
+            page++;
+          }
         }
       }
+    } else {
+      let page = config.page;
+      let hasNextPage = true;
 
-      hasNextPage = pageData.pageInfo?.hasNextPage ?? false;
-      if (limitPerType !== null && totalImportedForType >= limitPerType) {
-        hasNextPage = false;
-      }
+      while (hasNextPage) {
+        let perPage = Math.min(config.chunkSize, 50);
+        if (limitPerType !== null) {
+          const remaining = limitPerType - totalImportedForType;
+          if (remaining <= 0) break;
+          perPage = Math.min(perPage, remaining);
+        }
 
-      if (hasNextPage) {
-        page++;
+        console.log(`Fetching page ${page} of popular ${type} (chunk size: ${perPage})...`);
+
+        let pageData: { pageInfo?: { hasNextPage: boolean } | null; media: AniListMedia[] };
+        try {
+          const data = await request<{ Page: { pageInfo?: { hasNextPage: boolean } | null; media: AniListMedia[] } }>(
+            QUERY,
+            { type, page, perPage },
+            config.delay
+          );
+          pageData = data.Page;
+        } catch (err: any) {
+          console.error(`Failed to fetch page ${page} of ${type}: ${err.message}`);
+          break;
+        }
+
+        const mediaItems = pageData.media || [];
+        if (mediaItems.length === 0) {
+          console.log(`No more popular ${type} returned.`);
+          break;
+        }
+
+        for (const item of mediaItems) {
+          try {
+            const upserted = await upsertMedia(item);
+            imported.push(upserted);
+            totalImportedForType++;
+            console.log(`[${totalImportedForType}] Upserted: ${upserted.titleRomaji} (Slug: ${upserted.slug})`);
+          } catch (err: any) {
+            console.error(`Failed to upsert item ${item.id}: ${err.message}`);
+          }
+        }
+
+        hasNextPage = pageData.pageInfo?.hasNextPage ?? false;
+        if (limitPerType !== null && totalImportedForType >= limitPerType) {
+          hasNextPage = false;
+        }
+
+        if (hasNextPage) {
+          page++;
+        }
       }
     }
 
